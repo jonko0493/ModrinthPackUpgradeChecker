@@ -1,6 +1,7 @@
 ﻿using Modrinth;
 using Modrinth.Models;
 using Mono.Options;
+using NuGet.Versioning;
 using System.IO.Compression;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -37,19 +38,20 @@ namespace ModrinthPackUpgradeChecker
             ModrinthClient client = new();
             Regex slugRegex = SlugRegex();
 
-            async Task<(string, string, string[])> GetModSupportedVersions(string cdnUri)
+            async Task<(string, string, IEnumerable<SemanticVersion>)> GetModSupportedVersions(string cdnUri)
             {
                 Project mod = await client.Project.GetAsync(slugRegex.Match(cdnUri).Groups["slug"].Value);
-                return (mod.Title, mod.Slug, mod.GameVersions);
+                return (mod.Title, mod.Slug, mod.GameVersions.Select(SemanticVersionExtensions.ParseLoose));
             }
 
-            IEnumerable<Task<(string, string, string[])>> gameVersionFetches = mrpack.Files.Select(m => GetModSupportedVersions(m.Downloads.First()));
-            (string, string, string[])[] modGameVersions = await Task.WhenAll(gameVersionFetches);
+            IEnumerable<Task<(string, string, IEnumerable<SemanticVersion>)>> gameVersionFetches = mrpack.Files.Select(m => GetModSupportedVersions(m.Downloads.First()));
+            (string, string, IEnumerable<SemanticVersion>)[] modGameVersions = await Task.WhenAll(gameVersionFetches);
 
             int compatibleMods = 0;
             Console.WriteLine();
+            SemanticVersion mcSemVer = SemanticVersionExtensions.ParseLoose(mcVersion);
 
-            foreach ((string title, string slug, string[] gameVersions) in modGameVersions.OrderBy(m => m))
+            foreach ((string title, string slug, IEnumerable<SemanticVersion> gameVersions) in modGameVersions.OrderBy(m => m))
             {
                 if (string.IsNullOrEmpty(mcVersion))
                 {
@@ -57,16 +59,16 @@ namespace ModrinthPackUpgradeChecker
                 }
                 else
                 {
-                    if (gameVersions.Contains(mcVersion) && inclusive)
+                    if (gameVersions.Contains(mcSemVer) && inclusive)
                     {
                         Console.WriteLine($"{title} ({slug})");
                     }
-                    else if (!gameVersions.Contains(mcVersion) && !inclusive)
+                    else if (!gameVersions.Contains(mcSemVer) && !inclusive)
                     {
                         Console.WriteLine($"{title} ({slug}): {gameVersions.OrderByDescending(v => v).First()}");
                     }
                     
-                    if (gameVersions.Contains(mcVersion))
+                    if (gameVersions.Contains(mcSemVer))
                     {
                         compatibleMods++;
                     }
